@@ -1,0 +1,41 @@
+# install dependencies (if not already)
+# !pip install tfx==1.15.0 tensorflow==2.15.0
+
+import os
+from tfx.orchestration import metadata, pipeline
+from tfx.orchestration.local.local_dag_runner import LocalDagRunner
+from tfx.components import CsvExampleGen, Trainer, Evaluator, Pusher
+from tfx.proto import trainer_pb2
+
+# Paths
+PIPELINE_NAME = "iris_pipeline"
+PIPELINE_ROOT = f"./{PIPELINE_NAME}_output"
+DATA_PATH = "./data/iris.csv"
+SERVING_MODEL_DIR = os.path.join(PIPELINE_ROOT, 'serving_model')
+
+# Components
+example_gen = CsvExampleGen(input_base=DATA_PATH)
+
+trainer = Trainer(
+    run_fn='trainer.run_fn',  # This should point to a Python file with model logic
+    examples=example_gen.outputs['examples'],
+    train_args=trainer_pb2.TrainArgs(num_steps=100),
+    eval_args=trainer_pb2.EvalArgs(num_steps=50)
+)
+
+evaluator = Evaluator(examples=example_gen.outputs['examples'],
+                      model=trainer.outputs['model'])
+pusher = Pusher(model=trainer.outputs['model'], push_destination=tfx.proto.pusher_pb2.PushDestination(
+    filesystem=tfx.proto.pusher_pb2.PushDestination.Filesystem(base_directory=SERVING_MODEL_DIR)
+))
+
+# Pipeline
+p = pipeline.Pipeline(
+    pipeline_name=PIPELINE_NAME,
+    pipeline_root=PIPELINE_ROOT,
+    components=[example_gen, trainer, evaluator, pusher],
+    metadata_connection_config=metadata.sqlite_metadata_connection_config(
+        os.path.join(PIPELINE_ROOT, 'metadata.db'))
+)
+
+LocalDagRunner().run(p)
